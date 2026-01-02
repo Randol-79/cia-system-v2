@@ -1,0 +1,214 @@
+# CIA System - Mobile-First Deployment Configuration
+# Optimized for Render.com with mobile performance enhancements
+
+services:
+  # Backend API - Mobile Optimized
+  - type: web
+    name: cia-backend-mobile
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node server.js
+    healthCheckPath: /health
+    autoDeploy: true
+    
+    envVars:
+      - key: NODE_ENV
+        value: production
+      
+      - key: PORT
+        value: 5000
+      
+      # Mobile Optimization
+      - key: ENABLE_MOBILE_OPTIMIZATION
+        value: true
+      
+      - key: ENABLE_COMPRESSION
+        value: true
+      
+      - key: COMPRESSION_LEVEL
+        value: 9
+      
+      # Database Connection (Mobile Optimized)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cia-database
+          property: connectionString
+      
+      - key: DB_POOL_MIN
+        value: 2
+      
+      - key: DB_POOL_MAX
+        value: 10
+      
+      - key: DB_IDLE_TIMEOUT
+        value: 30000
+      
+      - key: DB_CONNECTION_TIMEOUT
+        value: 10000
+      
+      # Redis Cache (Mobile Optimized)
+      - key: REDIS_URL
+        fromService:
+          name: cia-redis
+          type: redis
+          property: connectionString
+      
+      - key: REDIS_TTL_SHORT
+        value: 300
+      
+      - key: REDIS_TTL_MEDIUM
+        value: 900
+      
+      - key: REDIS_TTL_LONG
+        value: 3600
+      
+      # API Configuration
+      - key: API_RATE_LIMIT_WINDOW_MS
+        value: 900000
+      
+      - key: API_RATE_LIMIT_MAX_REQUESTS
+        value: 100
+      
+      - key: API_TIMEOUT
+        value: 30000
+      
+      # Mobile-Specific
+      - key: MOBILE_PAGE_SIZE
+        value: 20
+      
+      - key: MOBILE_MAX_PAYLOAD_SIZE
+        value: 1mb
+      
+      - key: ENABLE_WEBSOCKET_COMPRESSION
+        value: true
+      
+      # CORS (Mobile Apps)
+      - key: CORS_ORIGIN
+        value: "*"
+      
+      - key: CORS_CREDENTIALS
+        value: true
+      
+      # Security
+      - key: SESSION_SECRET
+        generateValue: true
+      
+      - key: JWT_SECRET
+        generateValue: true
+      
+      - key: JWT_EXPIRATION
+        value: 7d
+      
+      # AI Integration
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      
+      # External Integrations
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      
+      - key: ACCELO_CLIENT_ID
+        sync: false
+      
+      - key: ACCELO_CLIENT_SECRET
+        sync: false
+      
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      
+      - key: FIREFLIES_API_KEY
+        sync: false
+  
+  # Frontend - Mobile-First PWA
+  - type: web
+    name: cia-frontend-mobile
+    env: static
+    region: oregon
+    plan: starter
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/build
+    pullRequestPreviewsEnabled: true
+    
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=3600, stale-while-revalidate=86400
+      
+      - path: /static/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      
+      - path: /service-worker.js
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      
+      - path: /*
+        name: X-XSS-Protection
+        value: 1; mode=block
+      
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      
+      - path: /*
+        name: Permissions-Policy
+        value: geolocation=(), microphone=(), camera=()
+      
+      # PWA Headers
+      - path: /manifest.json
+        name: Content-Type
+        value: application/manifest+json
+      
+      - path: /*
+        name: Service-Worker-Allowed
+        value: /
+    
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    
+    envVars:
+      - key: REACT_APP_API_URL
+        fromService:
+          name: cia-backend-mobile
+          type: web
+          property: host
+      
+      - key: REACT_APP_ENABLE_PWA
+        value: true
+      
+      - key: REACT_APP_ENABLE_OFFLINE
+        value: true
+      
+      - key: GENERATE_SOURCEMAP
+        value: false
+
+# Database - PostgreSQL
+databases:
+  - name: cia-database
+    databaseName: cia_db
+    user: cia_user
+    plan: starter
+    region: oregon
+    ipAllowList: []
+
+# Redis Cache
+  - name: cia-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []

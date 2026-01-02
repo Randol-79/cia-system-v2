@@ -1,0 +1,195 @@
+# CIA System - Production Docker Compose
+# Mobile-First Self-Hosted Deployment
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: cia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cia_db}
+      POSTGRES_USER: ${POSTGRES_USER:-cia_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - cia-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cia_user} -d ${POSTGRES_DB:-cia_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: cia-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - cia-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cia-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cia_user}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-cia_db}
+      DB_POOL_MIN: 2
+      DB_POOL_MAX: 10
+      DB_IDLE_TIMEOUT: 30000
+      DB_CONNECTION_TIMEOUT: 10000
+      
+      # Redis
+      REDIS_URL: redis://redis:6379
+      REDIS_TTL_SHORT: 300
+      REDIS_TTL_MEDIUM: 900
+      REDIS_TTL_LONG: 3600
+      
+      # Mobile Optimization
+      ENABLE_MOBILE_OPTIMIZATION: "true"
+      ENABLE_COMPRESSION: "true"
+      COMPRESSION_LEVEL: 9
+      MOBILE_PAGE_SIZE: 20
+      MOBILE_MAX_PAYLOAD_SIZE: 1mb
+      ENABLE_WEBSOCKET_COMPRESSION: "true"
+      
+      # API Configuration
+      API_RATE_LIMIT_WINDOW_MS: 900000
+      API_RATE_LIMIT_MAX_REQUESTS: 100
+      API_TIMEOUT: 30000
+      
+      # CORS
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      CORS_CREDENTIALS: "true"
+      
+      # Security
+      SESSION_SECRET: ${SESSION_SECRET:-change-this-secret}
+      JWT_SECRET: ${JWT_SECRET:-change-this-jwt-secret}
+      JWT_EXPIRATION: 7d
+      
+      # AI Integration
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      
+      # External Integrations
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      ACCELO_CLIENT_ID: ${ACCELO_CLIENT_ID}
+      ACCELO_CLIENT_SECRET: ${ACCELO_CLIENT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      FIREFLIES_API_KEY: ${FIREFLIES_API_KEY}
+    ports:
+      - "5000:5000"
+    networks:
+      - cia-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Frontend (Nginx + React Build)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:5000}
+        REACT_APP_WS_URL: ${REACT_APP_WS_URL:-ws://localhost:5000}
+        REACT_APP_ENABLE_PWA: "true"
+        REACT_APP_ENABLE_OFFLINE: "true"
+    container_name: cia-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - cia-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  cia-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
