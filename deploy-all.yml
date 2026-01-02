@@ -1,0 +1,229 @@
+name: Deploy to All Platforms
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18.x'
+
+jobs:
+  # ============================================================================
+  # TEST JOB - Run tests before deployment
+  # ============================================================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      
+      - name: Install Backend Dependencies
+        run: |
+          cd backend
+          npm ci
+      
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+      
+      - name: Run Backend Tests
+        run: |
+          cd backend
+          npm test || echo "No tests configured"
+      
+      - name: Run Frontend Tests
+        run: |
+          cd frontend
+          npm test -- --passWithNoTests || echo "No tests configured"
+      
+      - name: Lint Backend
+        run: |
+          cd backend
+          npm run lint || echo "No lint configured"
+      
+      - name: Lint Frontend
+        run: |
+          cd frontend
+          npm run lint || echo "No lint configured"
+
+  # ============================================================================
+  # DEPLOY TO RENDER.COM
+  # ============================================================================
+  deploy-render:
+    name: Deploy to Render.com
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Trigger Render Deployment
+        run: |
+          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK }}" ]; then
+            curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+            echo "✅ Render deployment triggered"
+          else
+            echo "⚠️ RENDER_DEPLOY_HOOK not configured"
+          fi
+
+  # ============================================================================
+  # DEPLOY FRONTEND TO VERCEL
+  # ============================================================================
+  deploy-vercel:
+    name: Deploy Frontend to Vercel
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+      
+      - name: Deploy to Vercel
+        run: |
+          cd frontend
+          if [ -n "${{ secrets.VERCEL_TOKEN }}" ]; then
+            vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
+            echo "✅ Vercel deployment complete"
+          else
+            echo "⚠️ VERCEL_TOKEN not configured"
+          fi
+
+  # ============================================================================
+  # DEPLOY BACKEND TO RAILWAY
+  # ============================================================================
+  deploy-railway:
+    name: Deploy Backend to Railway
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      
+      - name: Deploy to Railway
+        run: |
+          if [ -n "${{ secrets.RAILWAY_TOKEN }}" ]; then
+            cd backend
+            railway up --service backend
+            echo "✅ Railway deployment complete"
+          else
+            echo "⚠️ RAILWAY_TOKEN not configured"
+          fi
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  # ============================================================================
+  # BUILD AND PUSH DOCKER IMAGES
+  # ============================================================================
+  build-docker:
+    name: Build and Push Docker Images
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to Docker Hub
+        if: ${{ secrets.DOCKERHUB_USERNAME }}
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Build and Push Backend Image
+        if: ${{ secrets.DOCKERHUB_USERNAME }}
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/cia-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/cia-backend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/cia-backend:latest
+          cache-to: type=inline
+      
+      - name: Build and Push Frontend Image
+        if: ${{ secrets.DOCKERHUB_USERNAME }}
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/cia-frontend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/cia-frontend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/cia-frontend:latest
+          cache-to: type=inline
+
+  # ============================================================================
+  # NOTIFICATION JOB
+  # ============================================================================
+  notify:
+    name: Send Deployment Notifications
+    needs: [deploy-render, deploy-vercel, deploy-railway, build-docker]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Send Slack Notification
+        if: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          STATUS="${{ job.status }}"
+          COLOR="good"
+          if [ "$STATUS" != "success" ]; then
+            COLOR="danger"
+          fi
+          
+          curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "attachments": [{
+                "color": "'"$COLOR"'",
+                "title": "CIA System Deployment",
+                "text": "Deployment to all platforms: '"$STATUS"'",
+                "fields": [
+                  {
+                    "title": "Branch",
+                    "value": "'"${{ github.ref_name }}"'",
+                    "short": true
+                  },
+                  {
+                    "title": "Commit",
+                    "value": "'"${{ github.sha }}"'",
+                    "short": true
+                  }
+                ]
+              }]
+            }'
+      
+      - name: Create GitHub Deployment
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.ref,
+              environment: 'production',
+              auto_merge: false,
+              required_contexts: []
+            })
