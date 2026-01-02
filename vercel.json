@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "name": "cia-system-mobile",
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "build"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/service-worker.js",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Service-Worker-Allowed": "/"
+      },
+      "dest": "/service-worker.js"
+    },
+    {
+      "src": "/manifest.json",
+      "headers": {
+        "Content-Type": "application/manifest+json",
+        "Cache-Control": "public, max-age=3600"
+      },
+      "dest": "/manifest.json"
+    },
+    {
+      "src": "/static/(.*)",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      },
+      "dest": "/static/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "env": {
+    "REACT_APP_API_URL": "@api_url",
+    "REACT_APP_WS_URL": "@ws_url",
+    "REACT_APP_ENABLE_PWA": "true",
+    "REACT_APP_ENABLE_OFFLINE": "true",
+    "GENERATE_SOURCEMAP": "false"
+  },
+  "build": {
+    "env": {
+      "REACT_APP_API_URL": "@api_url",
+      "REACT_APP_WS_URL": "@ws_url",
+      "REACT_APP_ENABLE_PWA": "true",
+      "REACT_APP_ENABLE_OFFLINE": "true",
+      "GENERATE_SOURCEMAP": "false"
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "geolocation=(), microphone=(), camera=()"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    }
+  ]
+}
